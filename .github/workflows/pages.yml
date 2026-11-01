@@ -1,0 +1,60 @@
+name: Publish site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build site and index
+        run: |
+          python3 - <<'EOF'
+          import html, pathlib, re, shutil
+          from urllib.parse import quote
+
+          site = pathlib.Path("_site")
+          shutil.copytree(".", site, ignore=shutil.ignore_patterns(".git", ".github", "_site"))
+
+          links = []
+          for page in sorted(site.rglob("*.html")):
+              path = page.relative_to(site).as_posix()
+              if path == "index.html":
+                  continue
+              text = page.read_text(encoding="utf-8", errors="ignore")
+              match = re.search(r"<title[^>]*>(.*?)</title>", text, re.I | re.S)
+              title = html.unescape(match.group(1)).strip() if match else path
+              links.append(f'<li><a href="{quote(path)}">{html.escape(title or path)}</a></li>')
+
+          body = "\n".join(links)
+          (site / "index.html").write_text(
+              '<!doctype html><meta charset="utf-8"><title>Pages</title>'
+              f"<h1>Pages</h1><ul>\n{body}\n</ul>\n",
+              encoding="utf-8",
+          )
+          EOF
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v5
