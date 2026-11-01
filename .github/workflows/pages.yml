@@ -22,15 +22,25 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Build site and index
         run: |
           python3 - <<'EOF'
-          import html, pathlib, re, shutil
+          import html, pathlib, re, shutil, subprocess
+          from datetime import date
           from urllib.parse import quote
 
           site = pathlib.Path("_site")
           shutil.copytree(".", site, ignore=shutil.ignore_patterns(".git", ".github", "_site"))
+
+          def added_on(path):
+              log = subprocess.run(
+                  ["git", "log", "--follow", "--format=%as", "--", path],
+                  capture_output=True, text=True, check=True,
+              )
+              return date.fromisoformat(log.stdout.split()[-1])
 
           links = []
           for page in sorted(site.rglob("*.html")):
@@ -40,12 +50,32 @@ jobs:
               text = page.read_text(encoding="utf-8", errors="ignore")
               match = re.search(r"<title[^>]*>(.*?)</title>", text, re.I | re.S)
               title = html.unescape(match.group(1)).strip() if match else path
-              links.append(f'<li><a href="{quote(path)}">{html.escape(title or path)}</a></li>')
+              added = added_on(path)
+              links.append(
+                  f'<li><a href="{quote(path)}"><span>{html.escape(title or path)}</span>'
+                  f'<time datetime="{added}">{added.day} {added:%b %Y}</time></a></li>'
+              )
+
+          style = """
+          :root { --bg:#ffffff; --fg:#1d232b; --muted:#5b6673; --line:#dde3ea; --accent:#1f3b5c; --box:#f3f6f9; }
+          @media (prefers-color-scheme: dark) { :root { --bg:#14181d; --fg:#e7ebef; --muted:#9aa6b2; --line:#2c343d; --accent:#9cc2ea; --box:#1c2229; } }
+          * { box-sizing: border-box; }
+          body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+          main { max-width:720px; margin:0 auto; padding:24px 16px 48px; }
+          h1 { font-size:1.6rem; line-height:1.25; margin:0 0 16px; color:var(--accent); }
+          ul { list-style:none; padding:0; margin:0; border-top:1px solid var(--line); }
+          li { border-bottom:1px solid var(--line); }
+          li a { display:flex; justify-content:space-between; align-items:baseline; gap:16px; padding:10px 8px; color:var(--accent); text-decoration:none; }
+          li a:hover, li a:focus-visible { background:var(--box); }
+          time { flex:none; color:var(--muted); font-size:0.9rem; }
+          """
 
           body = "\n".join(links)
           (site / "index.html").write_text(
-              '<!doctype html><meta charset="utf-8"><title>Pages</title>'
-              f"<h1>Pages</h1><ul>\n{body}\n</ul>\n",
+              '<!doctype html><meta charset="utf-8">'
+              '<meta name="viewport" content="width=device-width, initial-scale=1">'
+              f"<title>Pages</title><style>{style}</style>"
+              f"<main><h1>Pages</h1><ul>\n{body}\n</ul></main>\n",
               encoding="utf-8",
           )
           EOF
